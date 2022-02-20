@@ -1,3 +1,12 @@
+{
+*******************************************************
+*                                                     *
+*      LibPAM Headers by Andrey Devyatkin             *
+*    a.k.a (RedCat NeLeGaLoFF)  or  UK8LCJ            *
+*                                                     *
+*******************************************************
+}
+
 unit pam_header;
 {$IFDEF FPC}
   {$mode objfpc}{$H+}
