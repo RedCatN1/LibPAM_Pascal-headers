@@ -3,7 +3,10 @@
 *                                                     *
 *      LibPAM Headers by Andrey Devyatkin             *
 *    a.k.a (RedCat NeLeGaLoFF)  or  UK8LCJ            *
-*                                                     *
+*       Special thanks to Alex Dudar for              *
+*   his help during the creation of this binding      *
+*   GitHub: https://github.com/itanswers              *
+*   GitLab: https://gitlab.com/adudar                 *
 *******************************************************
 }
 
@@ -14,9 +17,9 @@ unit pam_header;
 
 interface
 
-
+{$DEFINE USE_LIBPAM_MISC}
 uses
-  Classes, SysUtils, ctypes;
+  Classes, SysUtils, ctypes, cmem;
 
 const
   {$IFDEF FPC}
@@ -24,13 +27,15 @@ const
       libPAM = 'libpam.so';
     {$ENDIF}
    {$ENDIF}
- const
-  {$IFDEF FPC}
+
+  {$IFDEF USE_LIBPAM_MISC}
+   {$IFDEF FPC}
     {$IFDEF LINUX}
+      const
       libPAM_misc = 'libpam_misc.so';
     {$ENDIF}
    {$ENDIF}
-
+   {$ENDIF}
 
 const
     __LINUX_PAM__ = 1;
@@ -173,8 +178,7 @@ const
   { the prompt for getting a username  }
     PAM_USER_PROMPT = 9;
   { Linux-PAM extensions  }
-  { app supplied function to override failure
-  				   delays  }
+  { app supplied function to override failure delays  }
     PAM_FAIL_DELAY = 10;
   { X display name  }
     PAM_XDISPLAY = 11;
@@ -182,7 +186,14 @@ const
     PAM_XAUTHDATA = 12;
   { The type for pam_get_authtok  }
     PAM_AUTHTOK_TYPE = 13;
-
+  { Linux-PAM message styles }
+    PAM_PROMPT_ECHO_OFF  =  1;
+    PAM_PROMPT_ECHO_ON   =  2;
+    PAM_ERROR_MSG        =  3;
+    PAM_TEXT_INFO        =  4;
+   { Linux-PAM maximal array sizes }
+    PAM_MAX_RESP_SIZE = 512;
+    PAM_MAX_MSG_SIZE = 512;
 type
 pam_handle_t=record
 end;
@@ -190,12 +201,12 @@ end;
 type
   pam_message = record
       msg_style : longint;
-      msg : ^char;
+      msg : ^Char;
     end;
 
 type
   pam_response = record
-      resp : ^char;
+      resp : ^Char;
       resp_retcode : longint;
     end;
 
@@ -216,6 +227,7 @@ pam_conv_t = record
           appdata_ptr : pointer;
         end;
 
+
 type
 Ppam_handle_t = ^pam_handle_t;
 PPpam_handle_t = ^Ppam_handle_t;
@@ -224,14 +236,14 @@ type
 Ppam_conv = ^pam_conv_t;
 Ppamc_bp_t = ^pamc_bp_t;
 { -------------- The Linux-PAM Framework layer API ------------- }
-function pam_start(const service_name : PByte; const user : PByte; const pam_conversation : Ppam_conv; pamh : PPpam_handle_t):longint; cdecl; external libPAM;
+function pam_start(const service_name : Pchar; const user : Pchar; const pam_conversation : Ppam_conv; pamh : PPpam_handle_t):longint; cdecl; external libPAM;
 function pam_end(pamh : Ppam_handle_t;pam_status:longint):longint; cdecl; external libPAM;
 { Authentication API's }
 function pam_authenticate(pamh : Ppam_handle_t; flags : longint):longint; cdecl; external libPAM;
 function pam_setcred(pamh : Ppam_handle_t; flags : longint):longint; cdecl; external libPAM;
 { Account Management API's }
 function pam_acct_mgmt(pamh : Ppam_handle_t; flags : longint):longint; cdecl; external libPAM;
-
+ {$IFDEF USE_LIBPAM_MISC}
 { functions defined in pam_misc.* libraries }
 function misc_conv(num_msg:longint; msg:PPpam_message; resp:PPpam_response; appdata_ptr:pointer):longint; cdecl; external libPAM_misc;
 
@@ -241,11 +253,6 @@ function pam_misc_conv_warn_line: longint;cdecl;external libPAM_misc;           
 function pam_misc_conv_die_line: longint;cdecl;external libPAM_misc;           { cut-off remark }
 function pam_misc_conv_died:longint;cdecl;external libPAM_misc;      {1 = cut-off time reached (0 not) }
 
-type
-pam_misc_callbacks=record
-    pam_binary_handler_fn : function (appdata:pointer; prompt_p:Ppamc_bp_t):longint;cdecl;
-    pam_binary_handler_free : procedure (appdata:pointer; prompt_p:Ppamc_bp_t)cdecl;
-end;
 
 
 {
@@ -263,8 +270,83 @@ function pam_misc_drop_env(env:PPByte):PPbyte; cdecl; external libPAM_misc;
  * environment. }
 
 function pam_misc_setenv(pamh : Ppam_handle_t; const name:PByte; const value:PByte; readonly:longint):longint; cdecl; external libPAM_misc;
+ {$ENDIF}
 
+ type
+ pam_misc_callbacks=record
+     pam_binary_handler_fn : function (appdata:pointer; prompt_p:Ppamc_bp_t):longint;cdecl;
+     pam_binary_handler_free : procedure (appdata:pointer; prompt_p:Ppamc_bp_t)cdecl;
+ end;
+{My conversation function}
+ type
+ PAMUserData = record
+     PamUName : string;
+     PamUPass : string;
+   end;
+type PPAMUserData = ^PAMUserData;
+
+function CatConversation(num_msg:longint; msg:PPpam_message; resp:PPpam_response; appdata_ptr:pointer):longint;cdecl;
 implementation
+
+function CatConversation(num_msg:longint; msg:PPpam_message; resp:PPpam_response; appdata_ptr:pointer):longint;cdecl;
+var
+i:longint;
+passstr:^char;
+unamestr:^char;
+m:ppam_message;
+testP:pointer;
+Pr:^pam_response;
+PAMUserAccounData:PPAMUserData;
+begin
+   PAMUserAccounData:=appdata_ptr;
+   unamestr:=Pchar(PAMUserAccounData^.PamUName);
+   passstr:=Pchar(PAMUserAccounData^.PamUPass);
+    // check the count of message
+    if (num_msg <= 0 ) or (num_msg >= PAM_MAX_MSG_SIZE) then
+    begin
+        writeln('invalid num_msg '+inttostr(num_msg));
+        result:=PAM_CONV_ERR;
+    end;
+    // alloc memory for response
+    resp^:=Calloc(num_msg,SizeOf(pam_response));
+   if resp^=nil then
+    begin
+      writeln('bad alloc ');
+      result:=PAM_BUF_ERR;
+    end;
+   // response for message
+    for i:= 0 to num_msg-1 do
+    Begin
+     m:=msg[i];
+     Pr:=resp[i];
+     Pr^.resp_retcode:= 0;
+     if m^.msg_style = PAM_PROMPT_ECHO_OFF then
+      begin
+       TestP:=Calloc(num_msg,Length(passstr));
+       move(passstr^,TestP^,Length(passstr));
+       Pr^.resp:=TestP;
+       break;
+      end;
+     if m^.msg_style = PAM_PROMPT_ECHO_ON then
+      begin
+       TestP:=Calloc(num_msg,Length(unamestr));
+       move(unamestr^,TestP^,Length(unamestr));
+       Pr^.resp:=TestP;
+       break;
+      end;
+     if m^.msg_style = PAM_TEXT_INFO then
+      begin
+       writeln(' '+Pchar(m^.msg));
+      end;
+     if m^.msg_style = PAM_ERROR_MSG then
+      begin
+       writeln(''+Pchar(m^.msg));
+      end;
+  end;
+result:=PAM_SUCCESS;
+end;
+
 end.
+
 
 
