@@ -1,7 +1,7 @@
 program PamTest;
 
 uses
-  Classes, SysUtils, pam_header, unit1;
+  Classes, SysUtils, pam_header;
 var
 res:integer;
 pam_hannn:Ppam_handle_t;
